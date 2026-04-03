@@ -1,92 +1,67 @@
 'use client'
-import { useState } from 'react'
-import { useRouter } from 'next/navigation'
-import { Button } from '@/components/ui/button'
-import { Textarea } from '@/components/ui/textarea'
 
-const EXAMPLE_TOPICS = [
-  'AI will replace all software engineers',
-  'Social media does more harm than good',
-  'Remote work is better than office work',
-  'Nuclear energy is the future of power',
-]
+import Link from 'next/link'
+import { Header } from '@/components/layout/Header'
 
 export default function Home() {
-  const [topic, setTopic] = useState('')
-  const [rounds, setRounds] = useState(3)
-  const [loading, setLoading] = useState(false)
-  const router = useRouter()
-
-  async function startDebate() {
-    if (!topic.trim()) return
-    setLoading(true)
-
-    const res = await fetch('/api/debate/start', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ topic, rounds }),
-    })
-
-    const { debate } = await res.json()
-    router.push(`/debate/${debate.id}`)
-  }
-
   return (
-    <div className="max-w-xl mx-auto px-4 py-16">
-      <h1 className="text-3xl font-semibold mb-2">AI Debate Arena</h1>
-      <p className="text-muted-foreground mb-8">
-        Two AI agents argue any topic. Watch, judge, or join.
-      </p>
+    <>
+      <Header />
+      <div className="min-h-screen flex flex-col">
+        <section className="flex-1 flex flex-col items-center justify-center px-6 pt-14">
+          <div className="max-w-2xl mx-auto text-center">
+            <div className="mb-8 animate-fade-in">
+              <div className="inline-flex items-center gap-3 mb-8">
+                <span className="text-sm font-bold tracking-wider text-pro">RED CORNER</span>
+                <span className="relative">
+                  <span className="text-2xl font-black text-muted-foreground/30 animate-float">
+                    VS
+                  </span>
+                </span>
+                <span className="text-sm font-bold tracking-wider text-con">BLUE CORNER</span>
+              </div>
 
-      <Textarea
-        placeholder="Type a debate topic..."
-        value={topic}
-        onChange={e => setTopic(e.target.value)}
-        className="mb-4 resize-none"
-        rows={3}
-      />
+              <h1 className="text-5xl sm:text-6xl font-black tracking-tight leading-[1.1] mb-4 text-gradient-hero">
+                AI Debate Arena
+              </h1>
 
-      <div className="flex flex-wrap gap-2 mb-6">
-        {EXAMPLE_TOPICS.map(t => (
-          <button
-            key={t}
-            onClick={() => setTopic(t)}
-            className={`text-xs px-3 py-1.5 rounded-full border transition-colors ${
-              topic === t
-                ? 'bg-primary text-primary-foreground border-primary'
-                : 'border-border hover:bg-muted'
-            }`}
-          >
-            {t}
-          </button>
-        ))}
+              <p className="text-lg text-muted-foreground max-w-md mx-auto leading-relaxed">
+                Two AI agents argue any topic. Watch the arguments unfold in real-time, then see the verdict.
+              </p>
+            </div>
+
+            <div className="animate-fade-in-up" style={{ animationDelay: '200ms' }}>
+              <Link
+                href="/setup"
+                className="inline-flex items-center gap-2 px-8 py-3.5 rounded-xl bg-primary text-primary-foreground font-semibold text-sm transition-all duration-200 hover:brightness-110 hover:scale-[1.02] active:scale-[0.98]"
+              >
+                Enter the Arena
+              </Link>
+            </div>
+
+            <div
+              className="mt-16 grid grid-cols-3 gap-6 max-w-lg mx-auto animate-fade-in-up"
+              style={{ animationDelay: '400ms' }}
+            >
+              {[
+                { label: 'Pick a Topic', desc: 'Choose any debate topic' },
+                { label: 'Watch Live', desc: 'AI agents argue in rounds' },
+                { label: 'Get a Verdict', desc: 'A judge AI decides the winner' },
+              ].map((item) => (
+                <div
+                  key={item.label}
+                  className="glass rounded-xl p-4 text-center"
+                >
+                  <p className="text-sm font-semibold text-foreground mb-1">
+                    {item.label}
+                  </p>
+                  <p className="text-xs text-muted-foreground">{item.desc}</p>
+                </div>
+              ))}
+            </div>
+          </div>
+        </section>
       </div>
-
-      <div className="flex items-center gap-3 mb-6">
-        <span className="text-sm text-muted-foreground">Rounds:</span>
-        {[2, 3, 4].map(n => (
-          <button
-            key={n}
-            onClick={() => setRounds(n)}
-            className={`w-8 h-8 rounded-full text-sm border transition-colors ${
-              rounds === n
-                ? 'bg-primary text-primary-foreground border-primary'
-                : 'border-border hover:bg-muted'
-            }`}
-          >
-            {n}
-          </button>
-        ))}
-      </div>
-
-      <Button
-        onClick={startDebate}
-        disabled={!topic.trim() || loading}
-        className="w-full"
-        size="lg"
-      >
-        {loading ? 'Starting...' : 'Start debate'}
-      </Button>
-    </div>
+    </>
   )
 }

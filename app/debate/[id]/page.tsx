@@ -1,10 +1,17 @@
 'use client'
-import { useState, useEffect, useRef } from 'react'
+
+import { useState, useEffect, useRef, useCallback } from 'react'
 import { useParams, useRouter } from 'next/navigation'
-import { AgentColumn } from '../../../components/ui/AgentColumn'
-import { Button } from '@/components/ui/button'
+import { Header } from '@/components/layout/Header'
+import { AgentColumn } from '@/components/debate/AgentColumn'
+import { ArenaLayout } from '@/components/debate/ArenaLayout'
+import { RoundProgress } from '@/components/debate/RoundProgress'
+import { ScoreBar } from '@/components/debate/ScoreBar'
+import { RoundTransition } from '@/components/debate/RoundTransition'
 import { supabaseBrowser } from '@/lib/supabase-browser'
 import type { Argument, Debate } from '@/types/debate'
+
+type Phase = 'loading' | 'debating' | 'judging' | 'error'
 
 export default function DebatePage() {
   const { id } = useParams()
@@ -13,13 +20,25 @@ export default function DebatePage() {
   const [args, setArgs] = useState<Argument[]>([])
   const [activeSide, setActiveSide] = useState<'pro' | 'con' | null>(null)
   const [streamText, setStreamText] = useState('')
-  const [round, setRound] = useState(1)
-  const [done, setDone] = useState(false)
+  const [currentRound, setCurrentRound] = useState(1)
+  const [phase, setPhase] = useState<Phase>('loading')
+  const [showRoundTransition, setShowRoundTransition] = useState(false)
+  const [transitionRound, setTransitionRound] = useState(1)
+  const [error, setError] = useState<string | null>(null)
   const runningRef = useRef(false)
 
-  async function runRound(
-    debate: Debate,
-    history: Argument[],
+  const refetchArgs = useCallback(async () => {
+    const { data } = await supabaseBrowser
+      .from('arguments')
+      .select('*')
+      .eq('debate_id', id)
+      .order('created_at', { ascending: true })
+    if (data) setArgs(data)
+    return data || []
+  }, [id])
+
+  async function runTurn(
+    debateData: Debate,
     round: number,
     side: 'pro' | 'con'
   ) {
@@ -28,71 +47,75 @@ export default function DebatePage() {
     setActiveSide(side)
     setStreamText('')
 
-    const res = await fetch('/api/debate/turn', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ debateId: debate.id, side, round }),
-    })
-
-    // Read the stream
-    const reader = res.body?.getReader()
-    const decoder = new TextDecoder()
-    let full = ''
-
-    while (reader) {
-      const { done: streamDone, value } = await reader.read()
-      if (streamDone) break
-      const chunk = decoder.decode(value)
-      // Vercel AI SDK sends data: prefix — extract text
-      full += chunk
-      setStreamText(full)
-    }
-
-    // Refetch args from DB (includes scores after fallacy call)
-    const { data: newArgs } = await supabaseBrowser
-      .from('arguments')
-      .select('*')
-      .eq('debate_id', debate.id)
-      .order('created_at', { ascending: true })
-
-    const latestArg = newArgs?.find(
-      a => a.side === side && a.round === round
-    )
-
-    // Trigger fallacy + scoring
-    if (latestArg) {
-      await fetch('/api/debate/fallacy', {
+    try {
+      const res = await fetch('/api/debate/turn', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          argumentId: latestArg.id,
-          content: latestArg.content
-        }),
+        body: JSON.stringify({ debateId: debateData.id, side, round }),
       })
-    }
 
-    // Refetch with scores
-    const { data: scoredArgs } = await supabaseBrowser
-      .from('arguments')
-      .select('*')
-      .eq('debate_id', debate.id)
-      .order('created_at', { ascending: true })
+      if (!res.ok) {
+        throw new Error('Failed to get response')
+      }
 
-    setArgs(scoredArgs || [])
-    setStreamText('')
-    setActiveSide(null)
-    runningRef.current = false
+      const reader = res.body?.getReader()
+      const decoder = new TextDecoder()
+      let full = ''
 
-    // Decide what's next
-    if (side === 'pro') {
-      setTimeout(() => runRound(debate, scoredArgs || [], round, 'con'), 800)
-    } else if (round < debate.rounds) {
-      setTimeout(() => runRound(debate, scoredArgs || [], round + 1, 'pro'), 800)
-      setRound(r => r + 1)
-    } else {
-      setDone(true)
+      while (reader) {
+        const { done, value } = await reader.read()
+        if (done) break
+        full += decoder.decode(value)
+        setStreamText(full)
+      }
+
+      const latestArgs = await refetchArgs()
+
+      const latestArg = latestArgs.find(
+        (a: Argument) => a.side === side && a.round === round
+      )
+
+      if (latestArg) {
+        fetch('/api/debate/fallacy', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            argumentId: latestArg.id,
+            content: latestArg.content,
+          }),
+        }).then(() => refetchArgs())
+      }
+
+      setStreamText('')
+      setActiveSide(null)
+      runningRef.current = false
+
+      if (side === 'pro') {
+        setTimeout(() => runTurn(debateData, round, 'con'), 800)
+      } else if (round < debateData.rounds) {
+        const nextRound = round + 1
+        setTransitionRound(nextRound)
+        setShowRoundTransition(true)
+        setCurrentRound(nextRound)
+      } else {
+        setPhase('judging')
+        setTimeout(() => {
+          router.push(`/results/${id}`)
+        }, 2000)
+      }
+    } catch (err: any) {
+      setError(err.message || 'Something went wrong')
+      setPhase('error')
+      runningRef.current = false
     }
   }
+
+  const handleRoundTransitionComplete = useCallback(() => {
+    setShowRoundTransition(false)
+    if (debate) {
+      runTurn(debate, transitionRound, 'pro')
+    }
+  }, [debate, transitionRound])
 
   useEffect(() => {
     supabaseBrowser
@@ -101,50 +124,119 @@ export default function DebatePage() {
       .eq('id', id)
       .single()
       .then(({ data }) => {
-        setDebate(data)
-        if (data) runRound(data, [], 1, 'pro')
+        if (data) {
+          setDebate(data)
+          setPhase('debating')
+          runTurn(data, 1, 'pro')
+        } else {
+          setPhase('error')
+          setError('Debate not found')
+        }
       })
   }, [])
 
-  const proArgs = args.filter(a => a.side === 'pro')
-  const conArgs = args.filter(a => a.side === 'con')
+  const proArgs = args.filter((a) => a.side === 'pro')
+  const conArgs = args.filter((a) => a.side === 'con')
+
+  if (phase === 'loading') {
+    return (
+      <>
+        <Header showNewDebate />
+        <div className="min-h-screen flex items-center justify-center pt-14">
+          <div className="text-center animate-fade-in">
+            <p className="text-sm text-muted-foreground">Loading debate...</p>
+          </div>
+        </div>
+      </>
+    )
+  }
+
+  if (phase === 'error') {
+    return (
+      <>
+        <Header showNewDebate />
+        <div className="min-h-screen flex items-center justify-center pt-14">
+          <div className="text-center animate-fade-in space-y-4">
+            <p className="text-sm text-destructive">{error}</p>
+            <button
+              onClick={() => router.push('/setup')}
+              className="text-sm text-primary hover:underline"
+            >
+              Start a new debate
+            </button>
+          </div>
+        </div>
+      </>
+    )
+  }
 
   return (
-    <div className="max-w-4xl mx-auto px-4 py-8">
-      <div className="flex items-center justify-between mb-6">
-        <h2 className="font-medium text-sm text-muted-foreground">
-          {debate?.topic}
-        </h2>
-        <span className="text-sm text-muted-foreground">
-          Round {round} of {debate?.rounds}
-        </span>
-      </div>
-
-      <div className="grid grid-cols-2 gap-6">
-        <AgentColumn
-          side="pro"
-          arguments={proArgs}
-          isThinking={activeSide === 'pro'}
-          streamingText={activeSide === 'pro' ? streamText : ''}
-        />
-        <AgentColumn
-          side="con"
-          arguments={conArgs}
-          isThinking={activeSide === 'con'}
-          streamingText={activeSide === 'con' ? streamText : ''}
-        />
-      </div>
-
-      {done && (
-        <div className="mt-8 text-center">
-          <Button
-            size="lg"
-            onClick={() => router.push(`/results/${id}`)}
-          >
-            See verdict
-          </Button>
+    <>
+      <Header showNewDebate />
+      <div className="h-screen flex flex-col pt-14">
+        <div className="px-6 py-4 flex items-center justify-between border-b border-border">
+          <div className="flex-1 min-w-0">
+            <h1 className="text-sm font-medium text-foreground truncate">
+              {debate?.topic}
+            </h1>
+          </div>
+          <div className="flex items-center gap-6 ml-4">
+            <RoundProgress
+              currentRound={currentRound}
+              totalRounds={debate?.rounds || 3}
+              activeSide={activeSide}
+            />
+          </div>
         </div>
-      )}
-    </div>
+
+        <ArenaLayout
+          activeSide={activeSide}
+          proColumn={
+            <AgentColumn
+              side="pro"
+              arguments={proArgs}
+              isActive={activeSide === 'pro'}
+              isThinking={activeSide === 'pro'}
+              streamingText={activeSide === 'pro' ? streamText : ''}
+            />
+          }
+          conColumn={
+            <AgentColumn
+              side="con"
+              arguments={conArgs}
+              isActive={activeSide === 'con'}
+              isThinking={activeSide === 'con'}
+              streamingText={activeSide === 'con' ? streamText : ''}
+            />
+          }
+        />
+
+        <div className="px-6 py-3 border-t border-border">
+          <ScoreBar arguments={args} />
+        </div>
+
+        {phase === 'judging' && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-background/90 backdrop-blur-sm animate-fade-in">
+            <div className="text-center animate-scale-in">
+              <div className="w-16 h-16 rounded-2xl bg-judge/10 flex items-center justify-center mx-auto mb-4">
+                <span className="text-2xl font-bold text-judge animate-pulse-judge">J</span>
+              </div>
+              <p className="text-sm font-semibold text-foreground mb-2">
+                The judge is deliberating
+              </p>
+              <p className="text-xs text-muted-foreground">
+                Analyzing argument quality and evidence...
+              </p>
+            </div>
+          </div>
+        )}
+
+        <RoundTransition
+          round={transitionRound}
+          visible={showRoundTransition}
+          onComplete={handleRoundTransitionComplete}
+        />
+      </div>
+    </>
   )
 }
