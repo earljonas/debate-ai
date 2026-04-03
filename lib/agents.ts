@@ -85,11 +85,29 @@ export function buildMessages(
   systemPrompt: string,
   history: Argument[]
 ) {
-  return [
+  const messages: { role: 'system' | 'user' | 'assistant'; content: string }[] = [
     { role: 'system' as const, content: systemPrompt },
-    ...history.map(a => ({
-      role: a.side === 'pro' ? 'assistant' : 'user',
-      content: a.content,
-    })),
   ]
+
+  if (history.length > 0) {
+    messages.push(
+      ...history.map(a => ({
+        role: (a.side === 'pro' ? 'assistant' : 'user') as 'assistant' | 'user',
+        content: a.content,
+      }))
+    )
+  }
+
+  // Always ensure there is at least one user message.
+  // The Gemini API requires non-empty contents — if history is empty
+  // (first turn), we inject a kickoff prompt so the model has valid input.
+  const hasUserMessage = messages.some(m => m.role === 'user')
+  if (!hasUserMessage) {
+    messages.push({
+      role: 'user' as const,
+      content: 'Begin the debate. Present your opening argument.',
+    })
+  }
+
+  return messages
 }

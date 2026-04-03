@@ -1,9 +1,5 @@
-import type { NextConfig } from "next";
+import type { NextConfig } from 'next'
 
-const nextConfig: NextConfig = {
-  experimental: {
-    serverComponentsExternalPackages: ["openai"],
-  },
-};
+const nextConfig: NextConfig = {}
 
-export default nextConfig;
+export default nextConfig
