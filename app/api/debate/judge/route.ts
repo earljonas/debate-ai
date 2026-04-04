@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { ai, MODEL } from '@/lib/gemini'
 import { supabase } from '@/lib/supabase'
 import { getJudgePrompt } from '@/lib/agents'
+import { generateMockVerdict, isMockDebateEnabled } from '@/lib/mock-debate'
 import { safeParseJSON } from '@/lib/utils'
 import type { JudgeVerdict } from '@/types/debate'
 
@@ -43,6 +44,17 @@ export async function POST(req: NextRequest) {
       )
     }
 
+    if (isMockDebateEnabled(req)) {
+      const verdict = generateMockVerdict(debate.topic, args)
+
+      await supabase
+        .from('debates')
+        .update({ status: 'complete' })
+        .eq('id', debateId)
+
+      return NextResponse.json({ verdict })
+    }
+
     const prompt = getJudgePrompt(debate.topic, args)
 
     const response = await ai.models.generateContent({
@@ -71,10 +83,12 @@ export async function POST(req: NextRequest) {
       .eq('id', debateId)
 
     return NextResponse.json({ verdict })
-  } catch (error: any) {
+  } catch (error: unknown) {
+    const message =
+      error instanceof Error ? error.message : 'Internal server error'
     console.error('Error in /api/debate/judge:', error)
     return NextResponse.json(
-      { error: error.message || 'Internal server error' },
+      { error: message },
       { status: 500 }
     )
   }

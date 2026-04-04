@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { supabase } from '@/lib/supabase'
 
 export async function POST(req: NextRequest) {
-  const { topic, rounds } = await req.json()
+  const { topic, rounds, mockMode } = await req.json()
 
   if (!topic || typeof topic !== 'string') {
     return NextResponse.json(
@@ -26,5 +26,12 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: error.message }, { status: 500 })
   }
 
-  return NextResponse.json({ debate: data })
+  const response = NextResponse.json({ debate: data })
+  response.cookies.set('mock_debate', mockMode ? 'true' : 'false', {
+    path: '/',
+    sameSite: 'lax',
+    maxAge: 60 * 60 * 24 * 7,
+  })
+
+  return response
 }

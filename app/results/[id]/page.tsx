@@ -58,8 +58,9 @@ export default function ResultsPage() {
         setVerdict(data.verdict)
 
         setTimeout(() => setShowDetails(true), 2500)
-      } catch (err: any) {
-        setError(err.message || 'Failed to get verdict')
+      } catch (err: unknown) {
+        const message = err instanceof Error ? err.message : 'Failed to get verdict'
+        setError(message)
       } finally {
         setLoading(false)
       }
@@ -153,10 +154,10 @@ export default function ResultsPage() {
                       New Debate
                     </button>
                     <button
-                      onClick={() => router.push(`/debate/${id}`)}
+                      onClick={() => router.push(`/debate/${id}?view=review`)}
                       className="text-sm px-5 py-2.5 rounded-xl border border-border hover:bg-card transition-colors"
                     >
-                      View Debate
+                      Review Debate
                     </button>
                   </div>
                 </div>

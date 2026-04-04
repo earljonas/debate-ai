@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect } from 'react'
 
 interface RoundTransitionProps {
   round: number
@@ -9,20 +9,17 @@ interface RoundTransitionProps {
 }
 
 export function RoundTransition({ round, visible, onComplete }: RoundTransitionProps) {
-  const [show, setShow] = useState(false)
-
   useEffect(() => {
-    if (visible) {
-      setShow(true)
-      const timer = setTimeout(() => {
-        setShow(false)
-        onComplete()
-      }, 1500)
-      return () => clearTimeout(timer)
-    }
+    if (!visible) return
+
+    const timer = setTimeout(() => {
+      onComplete()
+    }, 1500)
+
+    return () => clearTimeout(timer)
   }, [visible, onComplete])
 
-  if (!show) return null
+  if (!visible) return null
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-background/90 backdrop-blur-sm animate-fade-in">

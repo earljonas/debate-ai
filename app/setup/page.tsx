@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useId, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { Header } from '@/components/layout/Header'
 import { TopicSuggestion } from '@/components/setup/TopicSuggestion'
@@ -16,8 +16,10 @@ const EXAMPLE_TOPICS = [
 ]
 
 export default function SetupPage() {
+  const mockToggleId = useId()
   const [topic, setTopic] = useState('')
   const [rounds, setRounds] = useState(3)
+  const [mockMode, setMockMode] = useState(false)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const router = useRouter()
@@ -31,7 +33,7 @@ export default function SetupPage() {
       const res = await fetch('/api/debate/start', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ topic, rounds }),
+        body: JSON.stringify({ topic, rounds, mockMode }),
       })
 
       if (!res.ok) {
@@ -41,8 +43,9 @@ export default function SetupPage() {
 
       const { debate } = await res.json()
       router.push(`/debate/${debate.id}`)
-    } catch (err: any) {
-      setError(err.message || 'Something went wrong')
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : 'Something went wrong'
+      setError(message)
       setLoading(false)
     }
   }
@@ -96,6 +99,45 @@ export default function SetupPage() {
               <RoundSelector value={rounds} onChange={setRounds} />
             </div>
 
+            <button
+              type="button"
+              aria-pressed={mockMode}
+              aria-labelledby={mockToggleId}
+              onClick={() => setMockMode((value) => !value)}
+              className={`w-full rounded-2xl border px-4 py-4 text-left transition-all ${
+                mockMode
+                  ? 'border-primary/40 bg-primary/10 shadow-[0_0_0_1px_rgba(0,0,0,0.03)]'
+                  : 'border-border bg-card hover:border-primary/20 hover:bg-card/90'
+              }`}
+            >
+              <div className="flex items-start justify-between gap-4">
+                <div>
+                  <p
+                    id={mockToggleId}
+                    className="text-sm font-semibold text-foreground"
+                  >
+                    Mock mode
+                  </p>
+                  <p className="text-xs text-muted-foreground mt-1">
+                    Use fake debate responses so you can test the full app without Gemini credits.
+                  </p>
+                </div>
+                <span
+                  className={`relative mt-0.5 h-7 w-12 rounded-full border transition-colors ${
+                    mockMode
+                      ? 'border-primary bg-primary'
+                      : 'border-border bg-muted'
+                  }`}
+                >
+                  <span
+                    className={`absolute top-1 h-5 w-5 rounded-full bg-background transition-transform ${
+                      mockMode ? 'translate-x-6' : 'translate-x-1'
+                    }`}
+                  />
+                </span>
+              </div>
+            </button>
+
             {error && (
               <p className="text-sm text-destructive">{error}</p>
             )}
@@ -105,7 +147,7 @@ export default function SetupPage() {
               disabled={!topic.trim() || loading}
               className="w-full py-3.5 rounded-xl bg-primary text-primary-foreground font-semibold text-sm transition-all duration-200 hover:brightness-110 disabled:opacity-40 disabled:cursor-not-allowed active:scale-[0.98]"
             >
-              {loading ? 'Starting...' : 'Begin Debate'}
+              {loading ? 'Starting...' : mockMode ? 'Begin Mock Debate' : 'Begin Debate'}
             </button>
           </div>
         </div>

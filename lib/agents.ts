@@ -53,7 +53,7 @@ export function getJudgePrompt(
   topic: string,
   args: Argument[]
 ): string {
-  const transcript = args.map((a, i) =>
+  const transcript = args.map((a) =>
     `[Round ${a.round} - ${a.side.toUpperCase()}]: ${a.content}`
   ).join('\n\n')
 

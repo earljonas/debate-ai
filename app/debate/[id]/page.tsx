@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useEffect, useRef, useCallback } from 'react'
-import { useParams, useRouter } from 'next/navigation'
+import { useParams, useRouter, useSearchParams } from 'next/navigation'
 import { Header } from '@/components/layout/Header'
 import { AgentColumn } from '@/components/debate/AgentColumn'
 import { ArenaLayout } from '@/components/debate/ArenaLayout'
@@ -11,11 +11,18 @@ import { RoundTransition } from '@/components/debate/RoundTransition'
 import { supabaseBrowser } from '@/lib/supabase-browser'
 import type { Argument, Debate } from '@/types/debate'
 
-type Phase = 'loading' | 'debating' | 'judging' | 'error'
+type Phase = 'loading' | 'preparing' | 'debating' | 'review' | 'judging' | 'error'
+
+const PRE_TURN_DELAY_MS = 900
+const BETWEEN_SIDES_DELAY_MS = 1400
+const POST_TURN_READING_DELAY_MS = 1000
+const ROUTE_TO_RESULTS_DELAY_MS = 2200
+const STREAM_CHARACTER_DELAY_MS = 14
 
 export default function DebatePage() {
   const { id } = useParams()
   const router = useRouter()
+  const searchParams = useSearchParams()
   const [debate, setDebate] = useState<Debate | null>(null)
   const [args, setArgs] = useState<Argument[]>([])
   const [activeSide, setActiveSide] = useState<'pro' | 'con' | null>(null)
@@ -24,30 +31,39 @@ export default function DebatePage() {
   const [phase, setPhase] = useState<Phase>('loading')
   const [showRoundTransition, setShowRoundTransition] = useState(false)
   const [transitionRound, setTransitionRound] = useState(1)
+  const [turnStatus, setTurnStatus] = useState('')
   const [error, setError] = useState<string | null>(null)
   const runningRef = useRef(false)
   const failedTurnRef = useRef<{ round: number; side: 'pro' | 'con' } | null>(null)
+  const isReviewRequest = searchParams.get('view') === 'review'
 
   const refetchArgs = useCallback(async () => {
     const { data } = await supabaseBrowser
       .from('arguments')
       .select('*')
       .eq('debate_id', id)
+      .order('round', { ascending: true })
       .order('created_at', { ascending: true })
-    if (data) setArgs(data)
+
+    if (data) {
+      setArgs(data)
+    }
+
     return data || []
   }, [id])
 
-  async function runTurn(
+  const runTurn = useCallback(async (
     debateData: Debate,
     round: number,
     side: 'pro' | 'con'
-  ) {
+  ) => {
     if (runningRef.current) return
+
     runningRef.current = true
     setActiveSide(side)
     setStreamText('')
-    setPhase('debating')
+    setPhase('preparing')
+    setTurnStatus(`${side === 'pro' ? 'Pro' : 'Con'} is preparing a round ${round} response`)
     setError(null)
 
     try {
@@ -66,6 +82,10 @@ export default function DebatePage() {
         throw new Error(errorMsg)
       }
 
+      await wait(PRE_TURN_DELAY_MS)
+      setPhase('debating')
+      setTurnStatus(`${side === 'pro' ? 'Pro' : 'Con'} is making the case`)
+
       const reader = res.body?.getReader()
       const decoder = new TextDecoder()
       let full = ''
@@ -73,8 +93,13 @@ export default function DebatePage() {
       while (reader) {
         const { done, value } = await reader.read()
         if (done) break
-        full += decoder.decode(value)
-        setStreamText(full)
+
+        const chunk = decoder.decode(value)
+        for (const char of chunk) {
+          full += char
+          setStreamText(full)
+          await wait(STREAM_CHARACTER_DELAY_MS)
+        }
       }
 
       if (!full || full.trim().length < 10) {
@@ -87,15 +112,16 @@ export default function DebatePage() {
       const latestArgs = await refetchArgs()
 
       const latestArg = latestArgs.find(
-        (a: Argument) => a.side === side && a.round === round
+        (argument) => argument.side === side && argument.round === round
       )
 
       if (!latestArg) {
-        await new Promise(r => setTimeout(r, 2000))
+        await wait(2000)
         const retryArgs = await refetchArgs()
         const retryArg = retryArgs.find(
-          (a: Argument) => a.side === side && a.round === round
+          (argument) => argument.side === side && argument.round === round
         )
+
         if (!retryArg) {
           failedTurnRef.current = { round, side }
           throw new Error(
@@ -105,7 +131,7 @@ export default function DebatePage() {
       }
 
       const savedArg = latestArg || (await refetchArgs()).find(
-        (a: Argument) => a.side === side && a.round === round
+        (argument) => argument.side === side && argument.round === round
       )
 
       if (savedArg) {
@@ -119,66 +145,97 @@ export default function DebatePage() {
         }).then(() => refetchArgs())
       }
 
+      setTurnStatus('Letting the argument land before the next response')
+      await wait(POST_TURN_READING_DELAY_MS)
+
       setStreamText('')
       setActiveSide(null)
       runningRef.current = false
       failedTurnRef.current = null
 
       if (side === 'pro') {
-        setTimeout(() => runTurn(debateData, round, 'con'), 800)
+        setTurnStatus('Con is preparing a rebuttal')
+        setTimeout(() => runTurn(debateData, round, 'con'), BETWEEN_SIDES_DELAY_MS)
       } else if (round < debateData.rounds) {
         const nextRound = round + 1
         setTransitionRound(nextRound)
-        setShowRoundTransition(true)
         setCurrentRound(nextRound)
+        setTurnStatus(`Round ${nextRound} is about to begin`)
+        setShowRoundTransition(true)
       } else {
         setPhase('judging')
+        setTurnStatus('Judge is weighing both sides')
         setTimeout(() => {
           router.push(`/results/${id}`)
-        }, 2000)
+        }, ROUTE_TO_RESULTS_DELAY_MS)
       }
-    } catch (err: any) {
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : 'Something went wrong'
       setStreamText('')
       setActiveSide(null)
-      setError(err.message || 'Something went wrong')
+      setTurnStatus('')
+      setError(message)
       setPhase('error')
       runningRef.current = false
     }
-  }
+  }, [id, refetchArgs, router])
 
-  function retryFailedTurn() {
+  const retryFailedTurn = useCallback(() => {
     if (!debate || !failedTurnRef.current) return
     const { round, side } = failedTurnRef.current
     runTurn(debate, round, side)
-  }
+  }, [debate, runTurn])
 
   const handleRoundTransitionComplete = useCallback(() => {
     setShowRoundTransition(false)
     if (debate) {
       runTurn(debate, transitionRound, 'pro')
     }
-  }, [debate, transitionRound])
+  }, [debate, runTurn, transitionRound])
 
   useEffect(() => {
-    supabaseBrowser
-      .from('debates')
-      .select('*')
-      .eq('id', id)
-      .single()
-      .then(({ data }) => {
-        if (data) {
-          setDebate(data)
-          setPhase('debating')
-          runTurn(data, 1, 'pro')
-        } else {
-          setPhase('error')
-          setError('Debate not found')
-        }
-      })
-  }, [])
+    let cancelled = false
 
-  const proArgs = args.filter((a) => a.side === 'pro')
-  const conArgs = args.filter((a) => a.side === 'con')
+    async function loadDebate() {
+      const { data } = await supabaseBrowser
+        .from('debates')
+        .select('*')
+        .eq('id', id)
+        .single()
+
+      if (cancelled) return
+
+      if (!data) {
+        setPhase('error')
+        setError('Debate not found')
+        return
+      }
+
+      setDebate(data)
+
+      const shouldReview = data.status === 'complete' || isReviewRequest
+      if (shouldReview) {
+        setCurrentRound(data.rounds)
+        setPhase('review')
+        setTurnStatus('Reviewing the completed debate transcript')
+        await refetchArgs()
+        return
+      }
+
+      setPhase('preparing')
+      setTurnStatus('Opening statements are about to begin')
+      runTurn(data, 1, 'pro')
+    }
+
+    loadDebate()
+
+    return () => {
+      cancelled = true
+    }
+  }, [id, isReviewRequest, refetchArgs, runTurn])
+
+  const proArgs = args.filter((argument) => argument.side === 'pro')
+  const conArgs = args.filter((argument) => argument.side === 'con')
 
   if (phase === 'loading') {
     return (
@@ -231,8 +288,21 @@ export default function DebatePage() {
             <h1 className="text-sm font-medium text-foreground truncate">
               {debate?.topic}
             </h1>
+            {turnStatus && (
+              <p className="mt-1 text-xs text-muted-foreground">
+                {turnStatus}
+              </p>
+            )}
           </div>
-          <div className="flex items-center gap-6 ml-4">
+          <div className="flex items-center gap-3 ml-4">
+            {phase === 'review' && (
+              <button
+                onClick={() => router.push(`/results/${id}`)}
+                className="text-xs px-3 py-1.5 rounded-full border border-border hover:bg-card transition-colors"
+              >
+                Back to Verdict
+              </button>
+            )}
             <RoundProgress
               currentRound={currentRound}
               totalRounds={debate?.rounds || 3}
@@ -248,7 +318,7 @@ export default function DebatePage() {
               side="pro"
               arguments={proArgs}
               isActive={activeSide === 'pro'}
-              isThinking={activeSide === 'pro'}
+              isThinking={activeSide === 'pro' || phase === 'preparing'}
               streamingText={activeSide === 'pro' ? streamText : ''}
             />
           }
@@ -257,14 +327,21 @@ export default function DebatePage() {
               side="con"
               arguments={conArgs}
               isActive={activeSide === 'con'}
-              isThinking={activeSide === 'con'}
+              isThinking={activeSide === 'con' || phase === 'preparing'}
               streamingText={activeSide === 'con' ? streamText : ''}
             />
           }
         />
 
-        <div className="px-6 py-3 border-t border-border">
-          <ScoreBar arguments={args} />
+        <div className="px-6 py-3 border-t border-border bg-background/80 backdrop-blur-sm">
+          <div className="flex items-center justify-between gap-4">
+            <ScoreBar arguments={args} />
+            {phase === 'review' && (
+              <p className="text-xs text-muted-foreground whitespace-nowrap">
+                Read-only transcript mode
+              </p>
+            )}
+          </div>
         </div>
 
         {phase === 'judging' && (
@@ -291,4 +368,8 @@ export default function DebatePage() {
       </div>
     </>
   )
+}
+
+function wait(duration: number) {
+  return new Promise((resolve) => setTimeout(resolve, duration))
 }

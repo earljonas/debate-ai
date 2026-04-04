@@ -13,7 +13,6 @@ export function RoundProgress({ currentRound, totalRounds, activeSide }: RoundPr
         const round = i + 1
         const isComplete = round < currentRound
         const isCurrent = round === currentRound
-        const isPending = round > currentRound
 
         return (
           <div key={round} className="flex items-center gap-2">
