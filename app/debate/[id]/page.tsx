@@ -26,6 +26,7 @@ export default function DebatePage() {
   const [transitionRound, setTransitionRound] = useState(1)
   const [error, setError] = useState<string | null>(null)
   const runningRef = useRef(false)
+  const failedTurnRef = useRef<{ round: number; side: 'pro' | 'con' } | null>(null)
 
   const refetchArgs = useCallback(async () => {
     const { data } = await supabaseBrowser
@@ -46,6 +47,8 @@ export default function DebatePage() {
     runningRef.current = true
     setActiveSide(side)
     setStreamText('')
+    setPhase('debating')
+    setError(null)
 
     try {
       const res = await fetch('/api/debate/turn', {
@@ -55,7 +58,12 @@ export default function DebatePage() {
       })
 
       if (!res.ok) {
-        throw new Error('Failed to get response')
+        let errorMsg = 'Failed to get response'
+        try {
+          const errData = await res.json()
+          errorMsg = errData.error || errorMsg
+        } catch {}
+        throw new Error(errorMsg)
       }
 
       const reader = res.body?.getReader()
@@ -69,19 +77,44 @@ export default function DebatePage() {
         setStreamText(full)
       }
 
+      if (!full || full.trim().length < 10) {
+        failedTurnRef.current = { round, side }
+        throw new Error(
+          'AI failed to generate a response. This is usually caused by API rate limits. Wait a moment and retry.'
+        )
+      }
+
       const latestArgs = await refetchArgs()
 
       const latestArg = latestArgs.find(
         (a: Argument) => a.side === side && a.round === round
       )
 
-      if (latestArg) {
+      if (!latestArg) {
+        await new Promise(r => setTimeout(r, 2000))
+        const retryArgs = await refetchArgs()
+        const retryArg = retryArgs.find(
+          (a: Argument) => a.side === side && a.round === round
+        )
+        if (!retryArg) {
+          failedTurnRef.current = { round, side }
+          throw new Error(
+            'Response was generated but not saved. This may be a temporary issue. Try again.'
+          )
+        }
+      }
+
+      const savedArg = latestArg || (await refetchArgs()).find(
+        (a: Argument) => a.side === side && a.round === round
+      )
+
+      if (savedArg) {
         fetch('/api/debate/fallacy', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            argumentId: latestArg.id,
-            content: latestArg.content,
+            argumentId: savedArg.id,
+            content: savedArg.content,
           }),
         }).then(() => refetchArgs())
       }
@@ -89,6 +122,7 @@ export default function DebatePage() {
       setStreamText('')
       setActiveSide(null)
       runningRef.current = false
+      failedTurnRef.current = null
 
       if (side === 'pro') {
         setTimeout(() => runTurn(debateData, round, 'con'), 800)
@@ -104,10 +138,18 @@ export default function DebatePage() {
         }, 2000)
       }
     } catch (err: any) {
+      setStreamText('')
+      setActiveSide(null)
       setError(err.message || 'Something went wrong')
       setPhase('error')
       runningRef.current = false
     }
+  }
+
+  function retryFailedTurn() {
+    if (!debate || !failedTurnRef.current) return
+    const { round, side } = failedTurnRef.current
+    runTurn(debate, round, side)
   }
 
   const handleRoundTransitionComplete = useCallback(() => {
@@ -156,14 +198,24 @@ export default function DebatePage() {
       <>
         <Header showNewDebate />
         <div className="min-h-screen flex items-center justify-center pt-14">
-          <div className="text-center animate-fade-in space-y-4">
+          <div className="text-center animate-fade-in space-y-4 max-w-md px-6">
             <p className="text-sm text-destructive">{error}</p>
-            <button
-              onClick={() => router.push('/setup')}
-              className="text-sm text-primary hover:underline"
-            >
-              Start a new debate
-            </button>
+            <div className="flex items-center justify-center gap-3">
+              {failedTurnRef.current && (
+                <button
+                  onClick={retryFailedTurn}
+                  className="text-sm px-4 py-2 rounded-lg bg-primary text-primary-foreground hover:brightness-110 transition-all"
+                >
+                  Retry
+                </button>
+              )}
+              <button
+                onClick={() => router.push('/setup')}
+                className="text-sm px-4 py-2 rounded-lg border border-border hover:bg-card transition-colors"
+              >
+                New Debate
+              </button>
+            </div>
           </div>
         </div>
       </>
